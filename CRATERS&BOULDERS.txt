@@ -1,0 +1,888 @@
+For Crater Detection
+
+import os #read/write in the local file system
+import cv2 #image processing
+import matplotlib.pyplot as plt #x,y-axis plotting
+import pandas as pd #data manupulation and analysis library (handles data - update,read)
+import numpy as np #mathematical operations
+import plotly.express as px #mathematical plot - using images
+import plotly.graph_objects as go # ''
+import seaborn as sns #data visualization
+from sklearn.model_selection import train_test_split #train and test data splitups
+train_img_path = "/content/drive/MyDrive/Craters project/train/images"
+train_lbl_path = "/content/drive/MyDrive/Craters project/train/labels"
+valid_img_path = "/content/drive/MyDrive/Craters project/valid/images"
+valid_lbl_path = "/content/drive/MyDrive/Craters project/valid/labels"
+test_img_path = "/content/drive/MyDrive/Craters project/test/images"
+test_lbl_path = "/content/drive/MyDrive/Craters project/test/labels"
+model_path = "/content/drive/MyDrive/Craters project/best.pt"
+data_yaml_path = "/content/drive/MyDrive/Craters project/data.yaml"
+# image definition and identification (like: identifying as male or female)
+def load_labels(label_path):
+    label_files = os.listdir(label_path)
+    data = []
+    classes = set()
+    for file in label_files:
+        with open(os.path.join(label_path, file), 'r') as f:
+            lines = f.readlines()
+            for line in lines:
+                parts = list(map(float, line.strip().split()))
+                data.append([file, *parts])
+                classes.add(int(parts[0]))
+  
+
+    df = pd.DataFrame(data, columns=['file', 'class', 'x_center', 'y_center', 'width', 'height'])
+    return df, sorted(classes)
+train_labels, train_classes = load_labels(train_lbl_path)
+valid_labels, valid_classes = load_labels(valid_lbl_path)
+test_labels, test_classes = load_labels(test_lbl_path)
+# image seperation for training, testing and valid class  (11,000 - total images added)
+# class[0] - has image
+# class[1,2,3,4,5....] - do not have image 
+all_classes = sorted(set(train_classes + valid_classes + test_classes))
+class_names = [f'class_{i}' for i in all_classes]
+# Output for the above cell
+print("Train Labels")
+print(train_labels.head())
+print("\nValidation Labels")
+print(valid_labels.head())
+print("\nTest Labels")
+print(test_labels.head())
+# storing in a file extension .yaml
+# Why? becz of Yolo model(deep learning) 
+data_yaml_content = f"""
+train: {train_img_path}
+val: {valid_img_path}
+test: {test_img_path}
+nc: {len(all_classes)}  # number of classes
+names: {class_names}  # class names
+"""
+with open(data_yaml_path, 'w') as f:
+    f.write(data_yaml_content)
+# Plotting distribution of bounding box sizes
+# making a box like identification in craters
+# classified based on area
+def plot_bounding_box_distribution(labels, title):
+    labels['area'] = labels['width'] * labels['height']
+    fig = px.histogram(labels, x='area', nbins=50, title=title)
+    fig.show()
+
+
+plot_bounding_box_distribution(train_labels, 'Train Bounding Box Area Distribution')
+plot_bounding_box_distribution(valid_labels, 'Validation Bounding Box Area Distribution')
+plot_bounding_box_distribution(test_labels, 'Test Bounding Box Area Distribution')
+# Image Preprocessing and Visualization
+# preprocessing: removing the unwanted data
+# bgr to rgb: to process the data and vizualization purpose
+def visualize_sample_images(image_path, label_df, n_samples=5):
+    image_files = os.listdir(image_path)[:n_samples]
+    for img_file in image_files:
+        img_path = os.path.join(image_path, img_file)
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10)) # standard size to display
+        ax.imshow(img)
+        labels = label_df[label_df['file'] == img_file]
+        for _, label in labels.iterrows():
+            x_center = int(label['x_center'] * img.shape[1])
+            y_center = int(label['y_center'] * img.shape[0])
+            width = int(label['width'] * img.shape[1])
+            height = int(label['height'] * img.shape[0])
+            x_min = x_center - width // 2
+            y_min = y_center - height // 2
+            rect = plt.Rectangle((x_min, y_min), width, height, edgecolor='red', facecolor='none', linewidth=2)
+            ax.add_patch(rect)
+        plt.title(f'Sample Image: {img_file}')
+        plt.axis('off')
+        plt.show()
+visualize_sample_images(train_img_path, train_labels)
+visualize_sample_images(valid_img_path, valid_labels)
+visualize_sample_images(test_img_path, test_labels)
+# You Only Look Once
+# Detecting an specific object from the image
+!pip install ultralytics
+from ultralytics import YOLO
+
+
+model = YOLO('yolov8n.pt')
+model.train(data=data_yaml_path, epochs=10)
+# Visualize sample detections
+# Created without label
+def visualize_detections(model, image_path, n_samples=10):
+    image_files = os.listdir(image_path)[:n_samples]
+    for img_file in image_files:
+        img_path = os.path.join(image_path, img_file)
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = model(img_path)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+        ax.imshow(img)
+        for result in results[0].boxes:
+            x_min, y_min, x_max, y_max = result.xyxy[0].tolist()
+            conf = result.conf[0].item()
+            rect = plt.Rectangle((x_min, y_min), x_max - x_min, y_max - y_min, edgecolor='red', facecolor='none', linewidth=2)
+            ax.add_patch(rect)
+            ax.text(x_min, y_min, f'{conf:.2f}', bbox=dict(facecolor='yellow', alpha=0.5))
+        plt.title(f'Detection in: {img_file}')
+        plt.axis('off')
+        plt.show()
+visualize_detections(model, test_img_path)
+print("Model training, evaluation, and sample visualization completed. The trained model is saved at '/kaggle/working/best_model.pt'.")
+
+
+For Boulder Detection
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import random
+
+
+import time
+#PATH PROCESS
+import os
+import os.path
+from pathlib import Path
+import glob
+from scipy.io import loadmat
+import nibabel as nib
+import csv
+#IMAGE PROCESS
+from PIL import Image
+from keras.preprocessing import image
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import cv2
+from keras.applications.vgg16 import preprocess_input, decode_predictions
+from keras.preprocessing import image
+from skimage.feature import hessian_matrix, hessian_matrix_eigvals
+from scipy.ndimage.filters import convolve
+from skimage import data, io, filters
+import skimage
+from skimage.morphology import convex_hull_image, erosion
+from IPython import display
+from scipy.ndimage import gaussian_filter
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import matplotlib.patches as patches
+#SCALER & TRANSFORMATION
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
+from keras import regularizers
+from sklearn.preprocessing import LabelEncoder
+#ACCURACY CONTROL
+from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, roc_auc_score, roc_curve
+
+
+from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.metrics import mean_squared_error, r2_score
+#OPTIMIZER
+from keras.optimizers import RMSprop,Adam,Optimizer,Optimizer, SGD
+#MODEL LAYERS
+from tensorflow.keras.models import Sequential
+from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPool2D, BatchNormalization,MaxPooling2D,BatchNormalization,\
+                        Permute, TimeDistributed, Bidirectional,GRU, SimpleRNN,\
+LSTM, GlobalAveragePooling2D, SeparableConv2D, ZeroPadding2D, Convolution2D, ZeroPadding2D,Reshape, Conv2DTranspose,\
+LeakyReLU, GaussianNoise, GlobalMaxPooling2D, ReLU, Input, Concatenate
+from keras import models
+from keras import layers
+import tensorflow as tf
+from keras.applications import VGG16,VGG19,inception_v3
+from keras import backend as K
+from keras.utils import plot_model
+from keras.datasets import mnist
+import keras
+from keras.models import Model
+#IGNORING WARNINGS
+from warnings import filterwarnings
+filterwarnings("ignore",category=DeprecationWarning)
+filterwarnings("ignore", category=FutureWarning)
+filterwarnings("ignore", category=UserWarning)
+Ground_PATH = Path("/content/drive/MyDrive/Images/ground")
+Render_PATH = Path("/content/drive/MyDrive/Images/render")
+Ground_PNG = list(Ground_PATH.glob("*.png"))
+Render_PNG = list(Render_PATH.glob("*.png"))
+print("GROUND LEN: ", len(Ground_PNG))
+print("---"*10)
+print("RENDER LEN: ", len(Render_PNG))
+print("10th GROUND: ",Ground_PNG[10])
+print("---"*10)
+
+
+print("10th RENDER: ",Render_PNG[10])
+Sorted_Ground = sorted(Ground_PNG)
+Sorted_Render = sorted(Render_PNG)
+print("10th GROUND: ",Sorted_Ground[10])
+print("---"*10)
+print("10th RENDER: ",Sorted_Render[10])
+Ground_SERIES = pd.Series(Sorted_Ground,name="MASK").astype(str)
+Render_SERIES = pd.Series(Sorted_Render,name="IMAGE").astype(str)
+print(Ground_SERIES.head(-1))
+print(Render_SERIES.head(-1))
+Main_Data = pd.concat([Render_SERIES,Ground_SERIES],axis=1)
+print(Main_Data.columns)
+print(Main_Data.isnull().sum())
+print(Main_Data.head(-1))
+Bounding_Box = pd.read_csv("/content/drive/MyDrive/Images/bounding_boxes.csv")
+print(Bounding_Box.head(-1))
+print(Bounding_Box["Frame"])
+Bounding_Box = Bounding_Box.drop("Frame",axis=1)
+print(Bounding_Box.head(-1))
+print("EXAMPLE 1th IMAGE BOUNDING:\n",Bounding_Box.iloc[0])
+print("EXAMPLE 1th IMAGE BOUNDING:\n",Bounding_Box.iloc[0].values)
+print("EXAMPLE 1th IMAGE BOUNDING TYPE:\n",type(Bounding_Box.iloc[0].values))
+plt.style.use("dark_background")
+figure,axis = plt.subplots(1,2,figsize=(12,12)
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][1]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][1]),cv2.COLOR_BGR2RGB)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+
+
+Operation_Colorbar = axis[1].imshow(Example_Picking_MASK)
+figure.colorbar(Operation_Colorbar, ax=axis.ravel().tolist(), shrink=0.5,label='SEGMENTATION')
+figure,axis = plt.subplots(1,2,figsize=(12,12))
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][3]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK
+cv2.cvtColor(cv2.imread(Main_Data["MASK"][3]),cv2.COLOR_BGR2RGB)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+
+
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+Operation_Colorbar = axis[1].imshow(Example_Picking_MASK)
+figure.colorbar(Operation_Colorbar, ax=axis.ravel().tolist(), shrink=0.5,label='SEGMENTATION')
+figure,axis = plt.subplots(1,2,figsize=(12,12))
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][3000]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][3000]),cv2.COLOR_BGR2RGB)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+Operation_Colorbar = axis[1].imshow(Example_Picking_MASK)
+figure.colorbar(Operation_Colorbar, ax=axis.ravel().tolist(), shrink=0.5,label='SEGMENTATION')
+figure,axis = plt.subplots(1,5,figsize=(20,20))
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][1]),cv2.COLOR_BGR2RGB)
+
+
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][1]),cv2.COLOR_BGR2GRAY)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK,cmap="gray")
+axis[2].set_xlabel(Example_Picking_MASK.shape)
+axis[2].set_ylabel(Example_Picking_MASK.size)
+axis[2].set_title("MASK")
+
+
+
+axis[2].imshow(Example_Picking_MASK,cmap="jet")
+axis[3].set_xlabel(Example_Picking_MASK.shape)
+axis[3].set_ylabel(Example_Picking_MASK.size)
+axis[3].set_title("MASK")
+axis[3].imshow(Example_Picking_MASK,cmap="hot")
+axis[4].set_xlabel(Example_Picking_MASK.shape)
+axis[4].set_ylabel(Example_Picking_MASK.size)
+axis[4].set_title("MASK")
+axis[4].imshow(Example_Picking_MASK,cmap="plasma")
+figure,axis = plt.subplots(1,5,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][10]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][10]),cv2.COLOR_BGR2GRAY)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK,cmap="gray")
+axis[2].set_xlabel(Example_Picking_MASK.shape)
+axis[2].set_ylabel(Example_Picking_MASK.size)
+axis[2].set_title("MASK")
+axis[2].imshow(Example_Picking_MASK,cmap="jet")
+axis[3].set_xlabel(Example_Picking_MASK.shape)
+axis[3].set_ylabel(Example_Picking_MASK.size)
+axis[3].set_title("MASK")
+axis[3].imshow(Example_Picking_MASK,cmap="hot")
+axis[4].set_xlabel(Example_Picking_MASK.shape)
+axis[4].set_ylabel(Example_Picking_MASK.size)
+axis[4].set_title("MASK")
+axis[4].imshow(Example_Picking_MASK,cmap="plasma")
+figure,axis = plt.subplots(1,5,figsize=(20,20))
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][2345]),cv2.COLOR_BGR2RGB)
+
+
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][2345]),cv2.COLOR_BGR2GRAY)
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK,cmap="gray")
+axis[2].set_xlabel(Example_Picking_MASK.shape)
+axis[2].set_ylabel(Example_Picking_MASK.size)
+axis[2].set_title("MASK")
+
+
+axis[2].imshow(Example_Picking_MASK,cmap="jet")
+axis[3].set_xlabel(Example_Picking_MASK.shape)
+axis[3].set_ylabel(Example_Picking_MASK.size)
+axis[3].set_title("MASK")
+axis[3].imshow(Example_Picking_MASK,cmap="hot")
+axis[4].set_xlabel(Example_Picking_MASK.shape)
+axis[4].set_ylabel(Example_Picking_MASK.size)
+axis[4].set_title("MASK")
+axis[4].imshow(Example_Picking_MASK,cmap="plasma")
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][2345]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][2345]),cv2.COLOR_BGR2GRAY)
+Copy_IMG = Example_Picking_IMG.copy()
+Copy_IMG[Example_Picking_MASK == 1] = [255,0,0]
+Copy_IMG[Example_Picking_MASK == 2] = [0,0,255]
+Copy_Compile_IMG = Example_Picking_IMG.copy()
+Layer_Concat_IMG = cv2.addWeighted(Copy_IMG,0.5,Copy_Compile_IMG,0.3,0,Copy_Compile_IMG)
+axis[0].set_xlabel(Example_Picking_IMG.shape)\
+
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG)
+
+
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][3]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][3]),cv2.COLOR_BGR2GRAY)
+Copy_IMG = Example_Picking_IMG.copy()
+Copy_IMG[Example_Picking_MASK == 1] = [255,0,0]
+Copy_IMG[Example_Picking_MASK == 2] = [0,0,255]
+Copy_Compile_IMG = Example_Picking_IMG.copy()
+Layer_Concat_IMG = cv2.addWeighted(Copy_IMG,0.5,Copy_Compile_IMG,0.8,0.2,Copy_Compile_IMG)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][12]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][12]),cv2.COLOR_BGR2GRAY)
+
+Copy_IMG = Example_Picking_IMG.copy()
+Copy_IMG[Example_Picking_MASK == 1] = [255,0,0]
+Copy_IMG[Example_Picking_MASK == 2] = [0,0,255]
+Copy_Compile_IMG = Example_Picking_IMG.copy()
+Layer_Concat_IMG = 
+
+
+cv2.addWeighted(Copy_IMG,0.5,Copy_Compile_IMG,0.5,0,Copy_Compile_IMG)
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][12]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][12]),cv2.COLOR_BGR2RGB)
+
+Layer_Concat_IMG = cv2.addWeighted(Example_Picking_IMG,0.8,Example_Picking_MASK,5.0,0.5)
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][888]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][888]),cv2.COLOR_BGR2RGB)
+
+Layer_Concat_IMG = cv2.addWeighted(Example_Picking_IMG,0.7,Example_Picking_MASK,2.9,1.5)
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG[:,:,0],cmap="jet")
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][552]),cv2.COLOR_BGR2RGB)
+
+
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][552]),cv2.COLOR_BGR2RGB)
+
+
+Layer_Concat_IMG = cv2.addWeighted(Example_Picking_IMG,0.8,Example_Picking_MASK,0.4,0.5)
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG[:,:,0],cmap="jet")
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][552]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][552]),cv2.COLOR_BGR2GRAY)
+
+
+Copy_IMG = Example_Picking_IMG.copy()
+Copy_IMG[Example_Picking_MASK == 255] = (255,0,255)
+
+Layer_Concat_IMG = cv2.addWeighted(Example_Picking_IMG,0.8,Copy_IMG,0.9,0.5)
+
+
+
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Layer_Concat_IMG.shape)
+axis[2].set_ylabel(Layer_Concat_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Layer_Concat_IMG)
+
+
+print(Bounding_Box.iloc[0].values)
+print(Bounding_Box.iloc[0].values[0])
+print(Bounding_Box.iloc[0].values[1])
+print(Bounding_Box.iloc[0].values[2])
+print(Bounding_Box.iloc[0].values[3])
+print(Bounding_Box.iloc[0].values.reshape(2,2))
+for coordinates_x, coordinates_y in Bounding_Box.iloc[0].values.reshape(2,2):
+    coordinates_x = int(coordinates_x)
+    coordinates_y = int(coordinates_y)
+    print(coordinates_x)
+    print(coordinates_y)
+for coordinates_x, coordinates_y in Bounding_Box.iloc[0].values.reshape(2,2):
+    print(coordinates_x)
+    print(coordinates_y)
+
+
+x = Bounding_Box.iloc[2].values[0]
+y = Bounding_Box.iloc[2].values[1]
+
+
+
+t = Bounding_Box.iloc[2].values[2]
+s = Bounding_Box.iloc[2].values[3]
+start_point = (x, y)
+end_point = (x + t, y + s)
+print(start_point)
+print(end_point)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][2]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][2]),cv2.COLOR_BGR2GRAY)
+
+Copy_Mask = Example_Picking_MASK.copy()
+for coordinates_x, coordinates_y in Bounding_Box.iloc[2].values.reshape(2,2):
+    coordinates_x = int(coordinates_x)
+    coordinates_y = int(coordinates_y)
+    cv2.drawMarker(Copy_Mask, (coordinates_x, coordinates_y), (255, 0, 0),thickness=5)
+
+
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Copy_Mask.shape)
+axis[2].set_ylabel(Copy_Mask.size)
+
+
+
+
+axis[2].set_title("CONCAT")
+axis[2].imshow(Copy_Mask)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][0]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][0]),cv2.COLOR_BGR2GRAY)
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+x = Bounding_Box.iloc[0].values[0]
+y = Bounding_Box.iloc[0].values[1]
+t = Bounding_Box.iloc[0].values[2]
+s = Bounding_Box.iloc[0].values[3]
+
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+Marker_Image = cv2.drawMarker(Copy_Mask, (int(x), int(y)), (255, 0, 0),thickness=5)
+cv2.putText(Copy_Mask, "ROCK", (int(x), int(y)), cv2.FONT_HERSHEY_COMPLEX_SMALL, 2, (255, 0, 0), 2)
+
+
+
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+
+axis[2].set_xlabel(Marker_Image.shape)
+axis[2].set_ylabel(Marker_Image.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Marker_Image)
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][1]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][1]),cv2.COLOR_BGR2GRAY)
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+x = Bounding_Box.iloc[1].values[0]
+y = Bounding_Box.iloc[1].values[1]
+t = Bounding_Box.iloc[1].values[2]
+s = Bounding_Box.iloc[1].values[3]
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+Marker_Image = cv2.drawMarker(Copy_Mask, (int(x), int(y)), (255, 0, 0),thickness=5)
+cv2.putText(Copy_Mask, "ROCK", (int(x), int(y)), cv2.FONT_HERSHEY_COMPLEX_SMALL, 2, (255, 0, 0), 2)
+
+
+
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+
+
+
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Marker_Image.shape)
+axis[2].set_ylabel(Marker_Image.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Marker_Image)
+
+figure,axis = plt.subplots(1,3,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][1]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][1]),cv2.COLOR_BGR2RGB)
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+x = Bounding_Box.iloc[1].values[0]
+y = Bounding_Box.iloc[1].values[1]
+t = Bounding_Box.iloc[1].values[2]
+s = Bounding_Box.iloc[1].values[3]
+
+Copy_Mask = Example_Picking_MASK.copy()
+
+Rec_IMG = cv2.rectangle(Copy_Mask, (int(x), int(y)), (int(x + t), int(y + s)), (255, 255, 0), 5)
+cv2.putText(Copy_Mask, "ROCK", (int(x), int(y)), cv2.FONT_HERSHEY_COMPLEX_SMALL, 2, (255, 0, 0), 2)
+
+
+
+
+axis[0].set_xlabel(Example_Picking_IMG.shape)
+axis[0].set_ylabel(Example_Picking_IMG.size)
+axis[0].set_title("IMAGE")
+axis[0].imshow(Example_Picking_IMG)
+
+
+axis[1].set_xlabel(Example_Picking_MASK.shape)
+axis[1].set_ylabel(Example_Picking_MASK.size)
+axis[1].set_title("MASK")
+axis[1].imshow(Example_Picking_MASK)
+
+axis[2].set_xlabel(Rec_IMG.shape)
+axis[2].set_ylabel(Rec_IMG.size)
+axis[2].set_title("CONCAT")
+axis[2].imshow(Rec_IMG)
+
+figure,axis = plt.subplots(1,figsize=(20,20))
+
+Example_Picking_IMG = cv2.cvtColor(cv2.imread(Main_Data["IMAGE"][0]),cv2.COLOR_BGR2RGB)
+Example_Picking_MASK = cv2.cvtColor(cv2.imread(Main_Data["MASK"][0]),cv2.COLOR_BGR2RGB)
+
+Bound_Coor = []
+with open("/content/drive/MyDrive/Images/bounding_boxes.csv") as bounding_boxes_csv:
+    CSV_Reader = csv.reader(bounding_boxes_csv, delimiter=',')
+    next(bounding_boxes_csv)
+    for rows in CSV_Reader:
+        if rows[0] == '1':
+            Bound_Coor.append(rows[1:5])
+        else:
+            break
+axis.imshow(Example_Picking_MASK)
+
+for bounding_coor in Bound_Coor:
+    bounding_box = list(map(float, bounding_coor))
+    Rect_Image = patches.Rectangle((bounding_box[0]-0.5,bounding_box[1]-0.5),
+                             bounding_box[2],bounding_box[3],
+                             linewidth=4,
+                             edgecolor='r',facecolor='none')
+    axis.add_patch(Rect_Image)
+
+
+Main_Data_Reduced = Main_Data[0:1000]
+print(Main_Data_Reduced.head(-1))
+Image_List = []
+Transformation_List = []
+
+for image_x,mask_x in zip(Main_Data_Reduced.IMAGE.values,Main_Data_Reduced.MASK.values):
+
+    Picking_IMG = cv2.cvtColor(cv2.imread(image_x),cv2.COLOR_BGR2RGB)
+    Picking_MASK = cv2.cvtColor(cv2.imread(mask_x),cv2.COLOR_BGR2RGB)
+    Layer_Concat_IMG = cv2.addWeighted(Picking_IMG,0.8,Picking_MASK,5.0,0.5)
+
+    Resized_Image = cv2.resize(Picking_IMG,(256,256))
+    Resized_Transformation = cv2.resize(Layer_Concat_IMG,(256,256))
+
+    Resized_Image = Resized_Image / 255.
+    Resized_Transformation = Resized_Transformation / 255.
+
+    Image_List.append(Resized_Image)
+  Transformation_List.append(Resized_Transformation)
+
+
+
+print("ARRAY IMAGE SHAPE: ",np.shape(np.array(Image_List)))
+print("ARRAY MASK SHAPE: ",np.shape(np.array(Transformation_List)))
+figure,axis = plt.subplots(1,2,figsize=(10,10))
+    axis[0].imshow(Transformation_List[10])
+axis[0].set_xlabel(Transformation_List[10].shape)
+axis[0].set_title("MASK")
+axis[1].imshow(Image_List[10])
+axis[1].set_xlabel(Image_List[10].shape)
+axis[1].set_title("LUNAR")
+figure,axis = plt.subplots(1,2,figsize=(10,10))
+axis[0].imshow(Transformation_List[100])
+axis[0].set_xlabel(Transformation_List[100].shape)
+
+
+axis[0].set_title("MASK")
+axis[1].imshow(Image_List[100])
+axis[1].set_xlabel(Image_List[100].shape)
+axis[1].set_title("LUNAR")
+figure,axis = plt.subplots(1,2,figsize=(10,10))
+axis[0].imshow(Transformation_List[450])
+axis[0].set_xlabel(Transformation_List[450].shape)
+axis[0].set_title("MASK")
+axis[1].imshow(Image_List[450])
+axis[1].set_xlabel(Image_List[450].shape)
+axis[1].set_title("LUNAR")
+Train_Set = np.array(Image_List,dtype="float32")
+Transformation_Set = np.array(Transformation_List,dtype="float32")
+print("TRAIN SHAPE: ",Train_Set.shape)
+print("TRANSFORMATION SHAPE: ",Transformation_Set.shape)
+print("---"*10)
+print("TRAIN DTYPE: ",Train_Set.dtype)
+print("TRANSFORMATION DTYPE: ",Transformation_Set.dtype)
+import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Conv2D, Conv2DTranspose, MaxPooling2D, concatenate, BatchNormalization, ReLU, Input
+from tensorflow.keras.optimizers import Adam
+# Compile parameters
+compile_loss = "binary_crossentropy"
+compile_optimizer = Adam(learning_rate=0.0001)
+output_class = 3  # Set to 3 to match the number of channels in the input images
+Checkpoint_Model = tf.keras.callbacks.ModelCheckpoint(monitor="val_accuracy",
+                                                      save_best_only=True,
+                                                      save_weights_only=True,
+                                                      filepath="./modelcheck.weights.h5")
+# Define U-Net model
+def unet_model(input_shape):
+    inputs = Input(shape=input_shape)
+    # Encoder (Downsampling)
+    
+
+    c1 = Conv2D(32, (3, 3), kernel_initializer='he_normal', padding="same")(inputs)
+    c1 = BatchNormalization()(c1)
+    c1 = ReLU()(c1)
+    c1 = Conv2D(32, (3, 3), kernel_initializer='he_normal', padding="same")(c1)
+    c1 = BatchNormalization()(c1)
+    c1 = ReLU()(c1)
+    p1 = MaxPooling2D((2,2))(c1)
+     c2 = Conv2D(64, (3,3), kernel_initializer='he_normal', padding="same")(p1)
+    c2 = BatchNormalization()(c2)
+    c2 = ReLU()(c2)
+    c2 = Conv2D(64, (3,3), kernel_initializer='he_normal', padding="same")(c2)
+    c2 = BatchNormalization()(c2)
+    c2 = ReLU()(c2)
+    p2 = MaxPooling2D((2,2))(c2)
+    c3 = Conv2D(128, (3, 3), kernel_initializer='he_normal', padding="same")(p2)
+    c3 = BatchNormalization()(c3)
+    c3 = ReLU()(c3)
+    c3 = Conv2D(128, (3, 3), kernel_initializer='he_normal', padding="same")(c3)
+    c3 = BatchNormalization()(c3)
+    c3 = ReLU()(c3)
+    p3 = MaxPooling2D((2, 2))(c3)
+    # Bottleneck
+    c4 = Conv2D(256, (3, 3), kernel_initializer='he_normal', padding="same")(p3)
+    c4 = BatchNormalization()(c4)
+    c4 = ReLU()(c4)
+    c4 = Conv2D(256, (3, 3), kernel_initializer='he_normal', padding="same")(c4)
+    c4 = BatchNormalization()(c4)
+    c4 = ReLU()(c4)
+    # Decoder (Upsampling)
+    u1 = Conv2DTranspose(128, (2, 2), strides=(2, 2), padding="same")(c4)
+    u1 = concatenate([u1, c3])
+    c5 = Conv2D(128, (3, 3), kernel_initializer='he_normal', padding="same")(u1)
+    c5 = BatchNormalization()(c5)
+    c5 = ReLU()(c5)
+    c5 = Conv2D(128, (3, 3), kernel_initializer='he_normal', padding="same")(c5)
+    
+
+    c5 = BatchNormalization()(c5)
+    c5 = ReLU()(c5)
+    u2 = Conv2DTranspose(64, (2, 2), strides=(2, 2), padding="same")(c5)
+    u2 = concatenate([u2, c2])
+    c6 = Conv2D(64, (3, 3), kernel_initializer='he_normal', padding="same")(u2)
+    c6 = BatchNormalization()(c6)
+    c6 = ReLU()(c6)
+    c6 = Conv2D(64, (3, 3), kernel_initializer='he_normal', padding="same")(c6)
+    c6 = BatchNormalization()(c6)
+    c6 = ReLU()(c6)
+
+  
+ 
+
+    u3 = Conv2DTranspose(32, (2, 2), strides=(2, 2), padding="same")(c6)
+    u3 = concatenate([u3, c1])
+    c7 = Conv2D(32, (3, 3), kernel_initializer='he_normal', padding="same")(u3)
+    c7 = BatchNormalization()(c7)
+    c7 = ReLU()(c7)
+    c7 = Conv2D(32, (3, 3), kernel_initializer='he_normal', padding="same")(c7)
+    c7 = BatchNormalization()(c7)
+    c7 = ReLU()(c7)
+    outputs = Conv2D(output_class, (1, 1), activation='sigmoid')(c7)
+    model = Model(inputs=[inputs], outputs=[outputs])
+    return model
+# Instantiate and compile the U-Net model
+input_shape = (256, 256, 3)
+model = unet_model(input_shape)
+model.compile(optimizer=compile_optimizer, loss=compile_loss, metrics=["mse"])
+
+# Example data generation
+def generate_data(num_samples, img_shape):
+    X = tf.random.normal((num_samples, *img_shape))
+    y = tf.random.normal((num_samples, *img_shape))
+    return X, y
+
+
+# Generate example data
+Train_Set, Transformation_Set = generate_data(100, (256, 256, 3))
+
+# Train the model
+Model_U_Net = model.fit(Train_Set, Transformation_Set, epochs=55, callbacks=[Checkpoint_Model])
+print(model.summary())
+print(model.layers)
+print(f"Total trainable parameters: {model.count_params()}")
+Prediction_MASK_Seen = model.predict(Train_Set[:12])
+figure,axis = plt.subplots(1,2,figsize=(10,10))
+axis[0].imshow(Transformation_List[100])
+axis[0].set_xlabel(Transformation_List[100].shape)
+axis[0].set_title("Predicted")
+axis[1].imshow(Image_List[100])
+axis[1].set_xlabel(Image_List[100].shape)
+axis[1].set_title("Actual")
+
